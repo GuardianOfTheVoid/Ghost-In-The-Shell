@@ -3,8 +3,9 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QApplication
 from PySide6.QtCore import QObject, Signal, Property, Slot
 import pandas as pd
-import network_graph.graph_objects as go
+import plotly.graph_objects as go
 
+from network_graph import create_network_graph
 
 class PlotlyBackend(QObject):
     valueChanged = Signal(str)
