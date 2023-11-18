@@ -5,32 +5,52 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from collections import deque
 import plotly.graph_objects as go
+import plotly.express as px
+import json
+import pandas as pd
 
+from website_data import get_location
 
-
+# Gets the links to traverse as well as the IP Address and returns them.
 def get_links(url):
-    response = requests.get(url)
+    response = requests.get(url, stream=True)
+    ip_address = response.raw._connection.sock.getpeername()
     soup = BeautifulSoup(response.text, 'lxml')
-    return [urljoin(url, a['href']) for a in soup.find_all('a', href=True)]
+    return [urljoin(url, a['href']) for a in soup.find_all('a', href=True)], ip_address
+
 
 
 def bfs_traversal(start_url, num_layers, graph):
-    visited = set()
+    visited = []
+    visited_ip_addresses = []
     queue = deque([(start_url, 0)])
 
+    attrs = {}
     while queue:
         url, layer = queue.popleft()
         if layer > num_layers:
+            # add our attrs
+            for url, ip_address in zip(visited, visited_ip_addresses):
+                attrs[url] = ip_address
+
+            # Need to set the node attributes manually see below
+            nx.set_node_attributes(graph, values=attrs, name='ip_address')
+
             break
+
         if url not in visited:
-            visited.add(url)
-            connections = get_links(url)
+            visited.append(url)
+            connections, ip_address = get_links(url)
+            visited_ip_addresses.append(ip_address)
 
-            graph.add_node(url)
+            # No longer seems to work hence the above code
+            graph.add_node(url, ip_address=ip_address)
+            # throws error graph.add_node(url, {'ip_address':ip_address})
 
-            for x in connections:
-                graph.add_edge(url, x)
-                queue.append((x, layer + 1))
+            if layer < num_layers:
+                for x in connections:
+                    graph.add_edge(url, x)
+                    queue.append((x, layer + 1))
 
 scan_layers = 1
 entrance = "https://www.youtube.com/"
@@ -41,11 +61,9 @@ seed = 0
 bfs_traversal(entrance, scan_layers, graph)
 pos = nx.spring_layout(graph, seed=seed)
 
-
 # Add pos to the node
 for n, p in pos.items():
     graph.nodes[n]['pos'] = p
-    print(n, p)
 
 def create_network_graph():
     edge_trace = go.Scatter(
@@ -69,19 +87,30 @@ def create_network_graph():
         node_x.append(x)
         node_y.append(y)
 
+    # Get our keys
+    keys = list(graph.nodes().keys())
+
+    ip_addresses = []
+    for node in graph.nodes(data=True):
+        print(node,  '\n')
+        ip_address = node[1]['ip_address'][0]
+        ip_addresses.append(ip_address)
+
+    url_ip_address_data = pd.DataFrame({
+        'url': keys,
+        'ip_address': ip_addresses
+    })
+
     node_trace = go.Scatter(
         x=node_x,
         y=node_y,
         mode='markers',
-        customdata=list(graph.nodes().keys()),
+        customdata=url_ip_address_data,
         hoverinfo='text',
-        hovertemplate='URL: %{customdata}',
+        hovertemplate='URL: %{customdata[0]} <br>'
+                      'IP Address: %{customdata[1]}',
         marker=dict(
             showscale=True,
-            # colorscale options
-            #'Greys' | 'YlGnBu' | 'Greens' | 'YlOrRd' | 'Bluered' | 'RdBu' |
-            #'Reds' | 'Blues' | 'Picnic' | 'Rainbow' | 'Portland' | 'Jet' |
-            #'Hot' | 'Blackbody' | 'Earth' | 'Electric' | 'Viridis' |
             colorscale='YlGnBu',
             reversescale=True,
             color=[],
@@ -106,17 +135,24 @@ def create_network_graph():
 
     fig = go.Figure(data=[edge_trace, node_trace],
                     layout=go.Layout(
-                    title='<br>Network graph made with Python',
-                    titlefont_size=16,
                     showlegend=False,
                     hovermode='closest',
-                    margin=dict(b=20,l=5,r=5,t=40),
-                    annotations=[ dict(
-                        text="Python code: <a href='https://plotly.com/ipython-notebooks/network-graphs/'> https://plotly.com/ipython-notebooks/network-graphs/</a>",
-                        showarrow=False,
-                        xref="paper", yref="paper",
-                        x=0.005, y=-0.002 ) ],
+                    margin=dict(b=20, l=5, r=5, t=40),
                     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
                     )
-    return fig.to_html()
+    return fig.to_json()
+
+
+def create_location_map(location_data):
+    print(location_data)
+
+    location_data = pd.DataFrame(location_data, index=[0])
+
+    fig = px.choropleth(location_data,
+                        locations="country_code_iso3",
+                        color="value",  # lifeExp is a column of gapminder
+                        hover_name="country"  # column to add to hover information
+                        )
+
+    return fig.to_json()
